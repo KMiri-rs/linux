@@ -8,6 +8,7 @@
 /recordmcount
 /rustdoc_test_builder
 /rustdoc_test_gen
+/rustdoc_test_gen_miri
 /sign-file
 /sorttable
 /target.json

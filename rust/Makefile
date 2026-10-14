@@ -409,11 +409,35 @@ quiet_cmd_rustdoc_test_kernel = RUSTDOC TK $<
 		$< $(rustdoc_test_kernel_quiet); \
 	$(objtree)/scripts/rustdoc_test_gen
 
+quiet_cmd_rustdoc_test_kernel_miri = RUSTDOC TM $<
+      cmd_rustdoc_test_kernel_miri = \
+	rm -rf $(objtree)/$(obj)/test/doctests/kernel; \
+	mkdir -p $(objtree)/$(obj)/test/doctests/kernel; \
+	$(rustc_target_envs) \
+	OBJTREE=$(abspath $(objtree)) \
+	$(RUSTDOC) --test $(filter-out --remap-path-scope=%,$(rust_flags)) \
+		-L$(objtree)/$(obj) --extern ffi --extern pin_init \
+		--extern kernel --extern build_error --extern macros \
+		--extern bindings --extern uapi \
+		--extern zerocopy --extern zerocopy_derive \
+		--no-run --crate-name kernel -Zunstable-options \
+		--sysroot=/dev/null \
+		$(doctests_modifiers_workaround) \
+		--test-builder $(objtree)/scripts/rustdoc_test_builder \
+		$< $(rustdoc_test_kernel_quiet); \
+	$(objtree)/scripts/rustdoc_test_gen_miri
+
 %/doctests_kernel_generated.rs %/doctests_kernel_generated_kunit.c: \
     $(src)/kernel/lib.rs $(obj)/kernel.o \
     $(objtree)/scripts/rustdoc_test_builder \
     $(objtree)/scripts/rustdoc_test_gen FORCE
 	+$(call if_changed,rustdoc_test_kernel)
+
+$(obj)/doctests_kernel_generated_miri.rs: \
+    $(src)/kernel/lib.rs $(obj)/kernel.o \
+    $(objtree)/scripts/rustdoc_test_builder \
+    $(objtree)/scripts/rustdoc_test_gen_miri FORCE
+	+$(call if_changed,rustdoc_test_kernel_miri)
 
 # We cannot use `-Zpanic-abort-tests` because some tests are dynamic,
 # so for the moment we skip `-Cpanic=abort`.
@@ -452,6 +476,13 @@ rusttest: rusttest-macros
 
 miri-kernel-test: rusttest-kernel-miri
 
+ifeq ($(CONFIG_RUST_KERNEL_DOCTESTS),y)
+miri-kernel-doctest: rusttest-kernel-doctest-miri
+else
+miri-kernel-doctest:
+	@echo "Skipping $@: CONFIG_RUST_KERNEL_DOCTESTS is not set"
+endif
+
 rusttest-kernel-miri: private rustc_target_flags = --cfg miri \
     --extern ffi=$(objtree)/$(obj)/test/libffi.rlib \
     --extern build_error=$(objtree)/$(obj)/test/libbuild_error.rlib \
@@ -466,6 +497,24 @@ rusttest-kernel-miri: $(src)/kernel/lib.rs \
     rusttestlib-pin_init rusttestlib-zerocopy rusttestlib-zerocopy_derive \
     rusttestlib-macros $(obj)/$(libmacros_name) $(obj)/bindings.o FORCE
 	+$(call if_changed,rustc_miri_test)
+
+ifeq ($(CONFIG_RUST_KERNEL_DOCTESTS),y)
+rusttest-kernel-doctest-miri: private rustc_target_flags = --cfg miri \
+    --extern ffi=$(objtree)/$(obj)/test/libffi.rlib \
+    --extern build_error=$(objtree)/$(obj)/test/libbuild_error.rlib \
+    --extern macros=$(objtree)/$(obj)/test/$(libmacros_name) \
+    --extern pin_init=$(objtree)/$(obj)/test/libpin_init.rlib \
+    --extern bindings=$(objtree)/$(obj)/test/libbindings.rlib \
+    --extern uapi=$(objtree)/$(obj)/test/libuapi.rlib \
+    --extern zerocopy=$(objtree)/$(obj)/test/libzerocopy.rlib \
+    --extern zerocopy_derive=$(objtree)/$(obj)/test/$(libzerocopy_derive_name) \
+    --extern kernel=$(objtree)/$(obj)/test/libkernel.rlib
+rusttest-kernel-doctest-miri: $(obj)/doctests_kernel_generated_miri.rs \
+    rusttestlib-ffi rusttestlib-bindings rusttestlib-uapi rusttestlib-build_error \
+    rusttestlib-pin_init rusttestlib-zerocopy rusttestlib-zerocopy_derive \
+    rusttestlib-macros rusttestlib-kernel $(obj)/$(libmacros_name) FORCE
+	+$(call if_changed,rustc_miri_test)
+endif
 
 rusttest-macros: private rustc_target_flags = --extern proc_macro \
     --extern macros --extern kernel --extern pin_init \

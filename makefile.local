@@ -1,8 +1,21 @@
 .ONESHELL:
 
+SELF := $(abspath $(lastword $(MAKEFILE_LIST)))
+
 MIRI_SYSROOT ?= /home/zjp/.cache/miri
 MIRI_BIN ?= $(shell rustc --print sysroot)/bin/miri
-MIRI_FLAGS ?= -Zmiri-disable-stacked-borrows
+MIRI_FLAGS ?= -Zmiri-disable-stacked-borrows -Zmiri-permissive-provenance -Amissing-docs
+KIND ?= all
+
+ifeq ($(KIND),unit)
+MIRI_TARGETS := miri-kernel-test
+else ifeq ($(KIND),doctest)
+MIRI_TARGETS := miri-kernel-doctest
+else ifeq ($(KIND),all)
+MIRI_TARGETS := miri-kernel-test miri-kernel-doctest
+else
+$(error Unsupported KIND='$(KIND)'; expected one of: unit, doctest, all)
+endif
 
 # `.config` doubles as the "already configured" stamp: make only reruns
 # config.sh when it is newer than .config (i.e. you changed the script).
@@ -39,4 +52,13 @@ test:
 .PHONY: miri
 miri:
 	MIRI_SYSROOT=$(MIRI_SYSROOT) \
-	make LLVM=1 ARCH=x86_64 miri-kernel-test RUSTC=rustc MIRI_RUSTC=$(MIRI_BIN) MIRI_FLAGS="$(MIRI_FLAGS)" HOSTRUSTC=rustc
+	make LLVM=1 ARCH=x86_64 $(MIRI_TARGETS) \
+		RUSTC=rustc MIRI_RUSTC=$(MIRI_BIN) MIRI_FLAGS="$(MIRI_FLAGS)" HOSTRUSTC=rustc
+
+.PHONY: miri-doctest
+miri-unit:
+	$(MAKE) -f $(SELF) miri KIND=unit
+
+.PHONY: miri-doctest
+miri-doctest:
+	MIRI_DOCTEST_FILTER=list_rs MIRI_TEST='rust_doctest_kernel_list_rs' $(MAKE) -f $(SELF) miri KIND=doctest
