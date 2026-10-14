@@ -292,10 +292,13 @@ rustdoc-clean: FORCE
 	$(Q)rm -rf $(rustdoc_output)
 
 quiet_cmd_rustc_test_library = $(RUSTC_OR_CLIPPY_QUIET) TL $<
+miri_dep_rustc_flags := $(if $(MIRI_SYSROOT),--sysroot=$(MIRI_SYSROOT) -Zalways-encode-mir)
+rustc_test_library_extra_flags ?= $(miri_dep_rustc_flags)
       cmd_rustc_test_library = \
 	$(rustc_target_envs) \
 	OBJTREE=$(abspath $(objtree)) \
 	$(RUSTC_OR_CLIPPY) $(filter-out $(skip_flags),$(rust_common_flags) $(rustc_target_flags)) \
+		$(rustc_test_library_extra_flags) \
 		@$(objtree)/include/generated/rustc_cfg \
 		--crate-type $(if $(rustc_test_library_proc),proc-macro,rlib) \
 		--out-dir $(objtree)/$(obj)/test --cfg testlib \
@@ -314,27 +317,32 @@ rusttestlib-ffi: $(src)/ffi.rs FORCE
 	+$(call if_changed,rustc_test_library)
 
 rusttestlib-proc_macro2: private rustc_target_flags = $(proc_macro2-flags)
+rusttestlib-proc_macro2: private rustc_test_library_extra_flags :=
 rusttestlib-proc_macro2: $(src)/proc-macro2/lib.rs FORCE
 	+$(call if_changed,rustc_test_library)
 
 rusttestlib-quote: private skip_flags = $(quote-skip_flags)
 rusttestlib-quote: private rustc_target_flags = $(quote-flags)
+rusttestlib-quote: private rustc_test_library_extra_flags :=
 rusttestlib-quote: $(src)/quote/lib.rs rusttestlib-proc_macro2 FORCE
 	+$(call if_changed,rustc_test_library)
 
 rusttestlib-syn: private rustc_target_flags = $(syn-flags)
+rusttestlib-syn: private rustc_test_library_extra_flags :=
 rusttestlib-syn: $(src)/syn/lib.rs rusttestlib-quote FORCE
 	+$(call if_changed,rustc_test_library)
 
 rusttestlib-zerocopy_derive: private rustc_target_flags = $(zerocopy_derive-flags) \
     --extern proc_macro
 rusttestlib-zerocopy_derive: private rustc_test_library_proc = yes
+rusttestlib-zerocopy_derive: private rustc_test_library_extra_flags :=
 rusttestlib-zerocopy_derive: $(src)/zerocopy-derive/lib.rs rusttestlib-syn FORCE
 	+$(call if_changed,rustc_test_library)
 
 rusttestlib-macros: private rustc_target_flags = --extern proc_macro \
     --extern proc_macro2 --extern quote --extern syn
 rusttestlib-macros: private rustc_test_library_proc = yes
+rusttestlib-macros: private rustc_test_library_extra_flags :=
 rusttestlib-macros: $(src)/macros/lib.rs \
     rusttestlib-proc_macro2 rusttestlib-quote rusttestlib-syn FORCE
 	+$(call if_changed,rustc_test_library)
@@ -342,6 +350,7 @@ rusttestlib-macros: $(src)/macros/lib.rs \
 rusttestlib-pin_init_internal: private rustc_target_flags = $(pin_init_internal-flags) \
     --extern proc_macro
 rusttestlib-pin_init_internal: private rustc_test_library_proc = yes
+rusttestlib-pin_init_internal: private rustc_test_library_extra_flags :=
 rusttestlib-pin_init_internal: $(src)/pin-init/internal/src/lib.rs \
     rusttestlib-proc_macro2 rusttestlib-quote rusttestlib-syn FORCE
 	+$(call if_changed,rustc_test_library)
@@ -416,11 +425,47 @@ quiet_cmd_rustc_test = $(RUSTC_OR_CLIPPY_QUIET) T  $<
 		@$(objtree)/include/generated/rustc_cfg \
 		$(rustc_target_flags) --out-dir $(objtree)/$(obj)/test \
 		-L$(objtree)/$(obj)/test \
-		--crate-name $(subst rusttest-,,$@) $<; \
+		--crate-name $(subst -,_,$(subst rusttest-,,$@)) $<; \
 	$(objtree)/$(obj)/test/$(subst rusttest-,,$@) $(rust_test_quiet) \
 		$(rustc_test_run_flags)
 
+MIRI_RUSTC ?= $(RUSTC)
+MIRI_TEST_RUSTC := $(or $(MIRI_RUSTC),$(shell $(RUSTC) --print sysroot)/bin/miri)
+MIRI_FLAGS ?=
+MIRI_TEST ?=
+
+quiet_cmd_rustc_miri_test = MIRI T  $<
+      cmd_rustc_miri_test = \
+	$(rustc_target_envs) \
+	OBJTREE=$(abspath $(objtree)) \
+	$(MIRI_TEST_RUSTC) --test $(rust_common_flags) \
+		$(MIRI_FLAGS) \
+		-Zalways-encode-mir \
+		$(if $(MIRI_SYSROOT),--sysroot=$(MIRI_SYSROOT)) \
+		@$(objtree)/include/generated/rustc_cfg \
+		$(rustc_target_flags) \
+		-L$(objtree)/$(obj)/test \
+		--crate-name $(subst -,_,$(subst rusttest-,,$@)) $< \
+		$(if $(strip $(MIRI_TEST)),-- $(MIRI_TEST))
+
 rusttest: rusttest-macros
+
+miri-kernel-test: rusttest-kernel-miri
+
+rusttest-kernel-miri: private rustc_target_flags = --cfg miri \
+    --extern ffi=$(objtree)/$(obj)/test/libffi.rlib \
+    --extern build_error=$(objtree)/$(obj)/test/libbuild_error.rlib \
+    --extern macros=$(objtree)/$(obj)/test/$(libmacros_name) \
+    --extern pin_init=$(objtree)/$(obj)/test/libpin_init.rlib \
+    --extern bindings=$(objtree)/$(obj)/test/libbindings.rlib \
+    --extern uapi=$(objtree)/$(obj)/test/libuapi.rlib \
+    --extern zerocopy=$(objtree)/$(obj)/test/libzerocopy.rlib \
+    --extern zerocopy_derive=$(objtree)/$(obj)/test/$(libzerocopy_derive_name)
+rusttest-kernel-miri: $(src)/kernel/lib.rs \
+    rusttestlib-ffi rusttestlib-bindings rusttestlib-uapi rusttestlib-build_error \
+    rusttestlib-pin_init rusttestlib-zerocopy rusttestlib-zerocopy_derive \
+    rusttestlib-macros $(obj)/$(libmacros_name) $(obj)/bindings.o FORCE
+	+$(call if_changed,rustc_miri_test)
 
 rusttest-macros: private rustc_target_flags = --extern proc_macro \
     --extern macros --extern kernel --extern pin_init \

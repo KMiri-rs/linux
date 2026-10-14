@@ -174,7 +174,7 @@ impl ModuleMetadata for LocalModule {
     };
 }
 
-#[cfg(not(testlib))]
+#[cfg(all(not(testlib), not(miri)))]
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo<'_>) -> ! {
     pr_emerg!("{}\n", info);

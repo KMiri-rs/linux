@@ -1,0 +1,42 @@
+.ONESHELL:
+
+MIRI_SYSROOT ?= /home/zjp/.cache/miri
+MIRI_BIN ?= $(shell rustc --print sysroot)/bin/miri
+MIRI_FLAGS ?= -Zmiri-disable-stacked-borrows
+
+# `.config` doubles as the "already configured" stamp: make only reruns
+# config.sh when it is newer than .config (i.e. you changed the script).
+# `config` is kept as a phony alias to force a full re-run when needed.
+.config: config.sh
+	./config.sh
+
+.PHONY: config
+config:
+	rm -f .config
+	$(MAKE) .config
+
+.PHONY: build
+build: .config
+	make RUSTC=miri LLVM=1 ARCH=x86_64 -j"$$(nproc)"
+
+.PHONY: run
+run: build
+	qemu-system-x86_64 \
+		-m 2048 -smp 2 \
+		-display none \
+		-serial mon:stdio \
+		-no-reboot \
+		-kernel arch/x86/boot/bzImage \
+		-initrd /tmp/initramfs-rust.cpio.gz \
+		-append "console=ttyS0,115200 earlycon=ttyS0,115200 rdinit=/init loglevel=8 panic=-1"
+
+rust-analyzer: .config
+	make LLVM=1 rust-analyzer
+
+test:
+	./tools/testing/kunit/kunit.py run --make_options LLVM=1 --arch x86_64 --kconfig_add CONFIG_RUST=y
+
+.PHONY: miri
+miri:
+	MIRI_SYSROOT=$(MIRI_SYSROOT) \
+	make LLVM=1 ARCH=x86_64 miri-kernel-test RUSTC=rustc MIRI_RUSTC=$(MIRI_BIN) MIRI_FLAGS="$(MIRI_FLAGS)" HOSTRUSTC=rustc
