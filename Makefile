@@ -1916,6 +1916,8 @@ help:
 	@echo  '		    (requires kernel .config)'
 	@echo  '  rusttest        - Runs the Rust tests'
 	@echo  '                    (requires kernel .config; downloads external repos)'
+	@echo  '  miri-kernel-test - Runs Rust kernel crate tests with cfg(miri)'
+	@echo  '                    (requires kernel .config; run with MIRI_RUSTC=<sysroot>/bin/miri)'
 	@echo  '  rust-analyzer	  - Generate rust-project.json rust-analyzer support file'
 	@echo  '		    (requires kernel .config)'
 	@echo  '  dir/file.[os]   - Build specified target only'
@@ -2027,6 +2029,10 @@ rustdoc: prepare
 # Testing target
 PHONY += rusttest
 rusttest: prepare
+	$(Q)$(MAKE) $(build)=rust $@
+
+PHONY += miri-kernel-test
+miri-kernel-test: prepare
 	$(Q)$(MAKE) $(build)=rust $@
 
 # Formatting targets
