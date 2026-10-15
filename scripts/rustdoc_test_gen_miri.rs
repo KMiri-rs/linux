@@ -96,6 +96,7 @@ use kernel::{{
     ModuleMetadata,
     ThisModule, //
 }};
+use std::dbg;
 
 unsafe extern "C" {{
     fn free(ptr: *mut c_void);

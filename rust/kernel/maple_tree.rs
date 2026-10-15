@@ -627,7 +627,7 @@ pub struct AllocError<T> {
 }
 
 /// The reason for the failure to insert.
-#[derive(PartialEq, Eq, Copy, Clone)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
 pub enum AllocErrorKind {
     /// There is not enough space for the requested allocation.
     Busy,

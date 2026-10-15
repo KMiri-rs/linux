@@ -96,7 +96,7 @@ unsafe impl<T: AtomicType> Sync for Atomic<T> {}
 /// ```
 /// use kernel::sync::atomic::{AtomicType, Atomic, Relaxed};
 ///
-/// #[derive(Clone, Copy, PartialEq, Eq)]
+/// #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 /// #[repr(i32)]
 /// enum State {
 ///     Uninit = 0,
