@@ -1,8 +1,22 @@
 .ONESHELL:
 
+SELF := $(abspath $(lastword $(MAKEFILE_LIST)))
+
 MIRI_SYSROOT ?= /home/zjp/.cache/miri
 MIRI_BIN ?= $(shell rustc --print sysroot)/bin/miri
-MIRI_FLAGS ?= -Zmiri-disable-stacked-borrows
+MIRI_FLAGS ?= -Zmiri-disable-stacked-borrows -Zmiri-permissive-provenance \
+							-Amissing-docs -Zcrate-attr='feature(arbitrary_self_types)'
+KIND ?= all
+
+ifeq ($(KIND),unit)
+MIRI_TARGETS := miri-kernel-test
+else ifeq ($(KIND),doctest)
+MIRI_TARGETS := miri-kernel-doctest
+else ifeq ($(KIND),all)
+MIRI_TARGETS := miri-kernel-test miri-kernel-doctest
+else
+$(error Unsupported KIND='$(KIND)'; expected one of: unit, doctest, all)
+endif
 
 # `.config` doubles as the "already configured" stamp: make only reruns
 # config.sh when it is newer than .config (i.e. you changed the script).
@@ -39,4 +53,60 @@ test:
 .PHONY: miri
 miri:
 	MIRI_SYSROOT=$(MIRI_SYSROOT) \
-	make LLVM=1 ARCH=x86_64 miri-kernel-test RUSTC=rustc MIRI_RUSTC=$(MIRI_BIN) MIRI_FLAGS="$(MIRI_FLAGS)" HOSTRUSTC=rustc
+	make LLVM=1 ARCH=x86_64 $(MIRI_TARGETS) \
+		RUSTC=rustc MIRI_RUSTC=$(MIRI_BIN) MIRI_FLAGS="$(MIRI_FLAGS)" HOSTRUSTC=rustc
+
+.PHONY: miri-unit
+miri-unit:
+	$(MAKE) -f $(SELF) miri KIND=unit
+
+.PHONY: miri-doctest
+miri-doctest:
+	MIRI_DOCTEST_FILTER=list_rs MIRI_TEST='rust_doctest_kernel_list_rs' $(MAKE) -f $(SELF) miri KIND=doctest
+
+MIRI_DOCTEST_FAST_SRC ?= rust/doctests_kernel_generated_miri.rs
+MIRI_DOCTEST_SKIP ?= alloc_kbox_rs_1 alloc_kbox_rs_5 alloc_kbox_rs_6 alloc_kbox_rs_11 \
+	                    alloc_kbox_rs_12 alloc_kbox_rs_13 bitmap_rs_0 bitmap_rs_1 bitmap_rs_2 \
+	                    maple_tree_rs_0 maple_tree_rs_1 maple_tree_rs_2 maple_tree_rs_3 \
+	                    maple_tree_rs_4 maple_tree_rs_5 maple_tree_rs_6 page_rs_0 page_rs_1 \
+	                    page_rs_3 rbtree_rs_1 rbtree_rs_2 rbtree_rs_3 rbtree_rs_4 rbtree_rs_5 \
+	                    rbtree_rs_6 rbtree_rs_7 rbtree_rs_8 rbtree_rs_9 rbtree_rs_10 \
+	                    revocable_rs_0 revocable_rs_1 sync_atomic_rs_0 sync_atomic_rs_1 \
+	                    sync_atomic_rs_2 sync_atomic_rs_3 sync_atomic_rs_4 sync_atomic_rs_5 \
+	                    sync_atomic_rs_6 sync_atomic_rs_7 sync_atomic_rs_8 sync_atomic_rs_9 \
+	                    sync_atomic_rs_10 sync_atomic_rs_11 sync_lock_spinlock_rs_0 \
+	                    sync_lock_spinlock_rs_1 sync_lock_spinlock_rs_2 id_pool_rs_0 id_pool_rs_1 \
+	                    task_rs_0 task_rs_1 time_hrtimer_rs_0 time_hrtimer_rs_1 \
+	                    time_hrtimer_rs_2 time_hrtimer_rs_3 workqueue_rs_0 workqueue_rs_1 \
+	                    workqueue_rs_5 alloc_allocator_rs_0 alloc_kvec_rs_2 block_mq_rs_0 \
+	                    cpumask_rs_0 debugfs_rs_4 error_rs_6 interop_list_rs_0 kunit_rs_0 \
+	                    print_rs_9 str_rs_5 sync_arc_rs_1 sync_barrier_rs_0 \
+	                    sync_completion_rs_0 sync_lock_mutex_rs_0 sync_lock_rs_0 sync_rs_1 \
+	                    sync_set_once_rs_0 transmute_rs_0 xarray_rs_0
+
+.PHONY: miri-doctest-fast
+miri-doctest-fast:
+	@test -f $(MIRI_DOCTEST_FAST_SRC) || { \
+		echo "missing $(MIRI_DOCTEST_FAST_SRC); run 'make -f $(SELF) miri-doctest' first"; \
+		exit 1; \
+	}
+	OBJTREE=$(abspath .) $(MIRI_BIN) --test --edition=2021 \
+		$(MIRI_FLAGS) \
+		-Zalways-encode-mir \
+		$(if $(MIRI_SYSROOT),--sysroot=$(MIRI_SYSROOT)) \
+		@include/generated/rustc_cfg \
+		--cfg miri \
+		-Lrust/test \
+		--extern ffi=rust/test/libffi.rlib \
+		--extern build_error=rust/test/libbuild_error.rlib \
+		--extern macros=rust/test/libmacros.so \
+		--extern pin_init=rust/test/libpin_init.rlib \
+		--extern bindings=rust/test/libbindings.rlib \
+		--extern uapi=rust/test/libuapi.rlib \
+		--extern zerocopy=rust/test/libzerocopy.rlib \
+		--extern zerocopy_derive=rust/test/libzerocopy_derive.so \
+		--extern kernel=rust/test/libkernel.rlib \
+		--crate-name kernel_doctest_miri \
+		$(MIRI_DOCTEST_FAST_SRC) \
+		-- $(MIRI_TEST) \
+		$(foreach test,$(MIRI_DOCTEST_SKIP),--skip $(test))
