@@ -13,8 +13,10 @@ for x in sh mount umount dmesg insmod uname ls cat echo sleep; do
   ln -sf /bin/busybox "$WORK/bin/$x"
 done
 
-# Put the rust module in the kernel.
-cp samples/rust/rust_minimal.ko "$WORK/"
+# Put the rust module in the initramfs only in module mode.
+if grep -q '^CONFIG_SAMPLE_RUST_MINIMAL=m' .config && [ -f samples/rust/rust_minimal.ko ]; then
+  cp samples/rust/rust_minimal.ko "$WORK/"
+fi
 
 cat >"$WORK/init" <<'EOF'
 #!/bin/sh
@@ -25,8 +27,12 @@ mount -t sysfs sysfs /sys
 echo "=== booted into test initramfs ==="
 uname -a
 
-echo "=== insmod rust_minimal.ko ==="
-insmod /rust_minimal.ko test_parameter=123 test_bool_parameter=1 || echo "insmod failed: $?"
+if [ -f /rust_minimal.ko ]; then
+  echo "=== insmod rust_minimal.ko ==="
+  insmod /rust_minimal.ko test_parameter=123 test_bool_parameter=1 || echo "insmod failed: $?"
+else
+  echo "=== rust_minimal is built-in (no .ko to insmod) ==="
+fi
 
 echo "=== dmesg (rust) ==="
 dmesg | grep -i rust || true
