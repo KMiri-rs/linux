@@ -190,4 +190,13 @@ config SAMPLE_RUST_HOSTPROGS
 
 	  If unsure, say N.
 
+config SAMPLE_KMIRI_PASSTHROUGH
+	bool "KMiri passthrough helper"
+	depends on PROC_FS
+	help
+	  This option builds a tiny procfs-based helper used by KMiri
+	  passthrough experiments under UML.
+
+	  If unsure, say N.
+
 endif # SAMPLES_RUST

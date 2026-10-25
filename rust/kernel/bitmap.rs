@@ -11,9 +11,9 @@ use crate::alloc::{AllocError, Flags};
 use crate::bindings;
 #[cfg(all(not(CONFIG_RUST_BITMAP_HARDENED), not(miri)))]
 use crate::pr_err;
-#[cfg(miri)]
+#[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
 extern crate alloc as rust_alloc;
-#[cfg(miri)]
+#[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
 use self::rust_alloc::{boxed::Box, vec};
 use core::ptr::NonNull;
 
@@ -224,7 +224,7 @@ impl Drop for BitmapVec {
         if self.nbits <= BitmapVec::MAX_INLINE_LEN {
             return;
         }
-        #[cfg(miri)]
+        #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
             let words = usize::div_ceil(self.nbits, usize::BITS as usize);
             // SAFETY: Under `cfg(miri)`, `repr.ptr` is created from `Box<[usize]>` in `new`.
@@ -236,7 +236,7 @@ impl Drop for BitmapVec {
             return;
         }
 
-        #[cfg(not(miri))]
+        #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
         {
         // SAFETY: `self.ptr` was returned by the C `bitmap_zalloc`.
         //
@@ -281,7 +281,7 @@ impl BitmapVec {
             return Err(AllocError);
         }
 
-        #[cfg(miri)]
+        #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
             let _ = flags;
             let words = usize::div_ceil(nbits, usize::BITS as usize);
@@ -293,7 +293,7 @@ impl BitmapVec {
             });
         }
 
-        #[cfg(not(miri))]
+        #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
         {
         let nbits_u32 = u32::try_from(nbits).unwrap();
         // SAFETY: `MAX_INLINE_LEN < nbits` and `nbits <= MAX_LEN`.
@@ -351,7 +351,7 @@ impl Bitmap {
             self.len(),
             index
         );
-        #[cfg(miri)]
+        #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
             let word = index / usize::BITS as usize;
             let bit = index % usize::BITS as usize;
@@ -364,7 +364,7 @@ impl Bitmap {
             return;
         }
 
-        #[cfg(not(miri))]
+        #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
         {
         // SAFETY: Bit `index` is within bounds.
         unsafe { bindings::__set_bit(index, self.as_mut_ptr()) };
@@ -393,7 +393,7 @@ impl Bitmap {
             self.len(),
             index
         );
-        #[cfg(miri)]
+        #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
             let word = index / usize::BITS as usize;
             let bit = index % usize::BITS as usize;
@@ -406,7 +406,7 @@ impl Bitmap {
             return;
         }
 
-        #[cfg(not(miri))]
+        #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
         {
         // SAFETY: `index` is within bounds and the caller has ensured that
         // there is no mix of non-atomic and atomic operations.
@@ -434,7 +434,7 @@ impl Bitmap {
             self.len(),
             index
         );
-        #[cfg(miri)]
+        #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
             let word = index / usize::BITS as usize;
             let bit = index % usize::BITS as usize;
@@ -447,7 +447,7 @@ impl Bitmap {
             return;
         }
 
-        #[cfg(not(miri))]
+        #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
         {
         // SAFETY: `index` is within bounds.
         unsafe { bindings::__clear_bit(index, self.as_mut_ptr()) };
@@ -476,7 +476,7 @@ impl Bitmap {
             self.len(),
             index
         );
-        #[cfg(miri)]
+        #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
             let word = index / usize::BITS as usize;
             let bit = index % usize::BITS as usize;
@@ -489,7 +489,7 @@ impl Bitmap {
             return;
         }
 
-        #[cfg(not(miri))]
+        #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
         {
         // SAFETY: `index` is within bounds and the caller has ensured that
         // there is no mix of non-atomic and atomic operations.
@@ -520,7 +520,7 @@ impl Bitmap {
     #[inline]
     pub fn copy_and_extend(&mut self, src: &Bitmap) {
         let len = core::cmp::min(src.len(), self.len());
-        #[cfg(miri)]
+        #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
             let dst_words = usize::div_ceil(self.len(), usize::BITS as usize);
             let src_words = usize::div_ceil(len, usize::BITS as usize);
@@ -534,7 +534,7 @@ impl Bitmap {
             return;
         }
 
-        #[cfg(not(miri))]
+        #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
         {
         // SAFETY: access to `self` and `src` is within bounds.
         unsafe {
@@ -570,7 +570,7 @@ impl Bitmap {
     /// ```
     #[inline]
     pub fn last_bit(&self) -> Option<usize> {
-        #[cfg(miri)]
+        #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
             if self.len() == 0 {
                 return None;
@@ -594,7 +594,7 @@ impl Bitmap {
             return None;
         }
 
-        #[cfg(not(miri))]
+        #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
         {
         // SAFETY: `_find_next_bit` access is within bounds due to invariant.
         let index = unsafe { bindings::_find_last_bit(self.as_ptr(), self.len()) };
@@ -617,7 +617,7 @@ impl Bitmap {
             self.len(),
             start
         );
-        #[cfg(miri)]
+        #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
             if start >= self.len() {
                 return None;
@@ -634,7 +634,7 @@ impl Bitmap {
             return None;
         }
 
-        #[cfg(not(miri))]
+        #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
         {
         // SAFETY: `_find_next_bit` tolerates out-of-bounds arguments and returns a
         // value larger than or equal to `self.len()` in that case.
@@ -657,7 +657,7 @@ impl Bitmap {
             self.len(),
             start
         );
-        #[cfg(miri)]
+        #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
             if start >= self.len() {
                 return None;
@@ -674,7 +674,7 @@ impl Bitmap {
             return None;
         }
 
-        #[cfg(not(miri))]
+        #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
         {
         // SAFETY: `_find_next_zero_bit` tolerates out-of-bounds arguments and returns a
         // value larger than or equal to `self.len()` in that case.
