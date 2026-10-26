@@ -79,6 +79,24 @@ miri:
 miri-unit:
 	$(MAKE) -f $(SELF) miri KIND=unit
 
+.PHONY: miri-unit-c2rust
+miri-unit-c2rust:
+	set -euo pipefail
+	UM_CFG=/tmp/kmiri-c2rust/um.config
+	mkdir -p /tmp/kmiri-c2rust
+	rm -f "$$UM_CFG"
+	make ARCH=um LLVM=1 KCONFIG_CONFIG="$$UM_CFG" defconfig
+	./scripts/config --file "$$UM_CFG" --enable RUST
+	./scripts/config --file "$$UM_CFG" --enable MODULES
+	make ARCH=um LLVM=1 KCONFIG_CONFIG="$$UM_CFG" olddefconfig
+	export LD_LIBRARY_PATH="$$(rustc --print sysroot)/lib:$$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/lib:$${LD_LIBRARY_PATH:-}"
+	MIRI_SYSROOT=$(MIRI_SYSROOT) \
+	make LLVM=1 ARCH=um KCONFIG_CONFIG="$$UM_CFG" miri-kernel-test \
+		RUSTC=rustc MIRI_RUSTC=/home/zjp/KMiri/kmiri/target/debug/miri \
+		MIRI_TEST='bitmap::tests::' \
+		MIRI_FLAGS='-Zmiri-disable-stacked-borrows -Zmiri-permissive-provenance -Amissing-docs --cfg KMIRI_BITMAP_C2RUST' \
+		HOSTRUSTC=rustc
+
 .PHONY: miri-unit-passthrough
 miri-unit-passthrough:
 	set -euo pipefail

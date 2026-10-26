@@ -9,11 +9,14 @@
 use crate::alloc::{AllocError, Flags};
 #[cfg_attr(miri, allow(unused_imports))]
 use crate::bindings;
+#[cfg(all(miri, KMIRI_BITMAP_C2RUST, not(KMIRI_BITMAP_PASSTHROUGH)))]
+#[path = "bitmap_c2rust.rs"]
+mod bitmap_c2rust;
 #[cfg(all(not(CONFIG_RUST_BITMAP_HARDENED), not(miri)))]
 use crate::pr_err;
-#[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
+#[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH), not(KMIRI_BITMAP_C2RUST)))]
 extern crate alloc as rust_alloc;
-#[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
+#[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH), not(KMIRI_BITMAP_C2RUST)))]
 use self::rust_alloc::{boxed::Box, vec};
 use core::ptr::NonNull;
 
@@ -226,6 +229,16 @@ impl Drop for BitmapVec {
         }
         #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
+            #[cfg(KMIRI_BITMAP_C2RUST)]
+            {
+                unsafe {
+                    bitmap_c2rust::bitmap_free(self.repr.ptr.as_ptr().cast::<core::ffi::c_ulong>())
+                };
+                return;
+            }
+
+            #[cfg(not(KMIRI_BITMAP_C2RUST))]
+            {
             let words = usize::div_ceil(self.nbits, usize::BITS as usize);
             // SAFETY: Under `cfg(miri)`, `repr.ptr` is created from `Box<[usize]>` in `new`.
             // Reconstruct the boxed slice with the same length so it can be dropped.
@@ -234,6 +247,7 @@ impl Drop for BitmapVec {
                 drop(Box::from_raw(data));
             }
             return;
+            }
         }
 
         #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
@@ -283,6 +297,19 @@ impl BitmapVec {
 
         #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
+            #[cfg(KMIRI_BITMAP_C2RUST)]
+            {
+                let nbits_u32 = u32::try_from(nbits).unwrap();
+                let ptr = unsafe { bitmap_c2rust::bitmap_zalloc(nbits_u32, flags.as_raw()) };
+                let ptr = NonNull::new(ptr.cast::<usize>()).ok_or(AllocError)?;
+                return Ok(BitmapVec {
+                    repr: BitmapRepr { ptr },
+                    nbits,
+                });
+            }
+
+            #[cfg(not(KMIRI_BITMAP_C2RUST))]
+            {
             let _ = flags;
             let words = usize::div_ceil(nbits, usize::BITS as usize);
             let boxed = vec![0usize; words].into_boxed_slice();
@@ -291,6 +318,7 @@ impl BitmapVec {
                 repr: BitmapRepr { ptr },
                 nbits,
             });
+            }
         }
 
         #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
@@ -353,6 +381,19 @@ impl Bitmap {
         );
         #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
+            #[cfg(KMIRI_BITMAP_C2RUST)]
+            {
+                unsafe {
+                    bitmap_c2rust::__set_bit(
+                        index as core::ffi::c_ulong,
+                        self.as_mut_ptr().cast::<core::ffi::c_ulong>(),
+                    )
+                };
+                return;
+            }
+
+            #[cfg(not(KMIRI_BITMAP_C2RUST))]
+            {
             let word = index / usize::BITS as usize;
             let bit = index % usize::BITS as usize;
             let words = usize::div_ceil(self.len(), usize::BITS as usize);
@@ -362,6 +403,7 @@ impl Bitmap {
                 data[word] |= 1usize << bit;
             }
             return;
+            }
         }
 
         #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
@@ -395,6 +437,19 @@ impl Bitmap {
         );
         #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
+            #[cfg(KMIRI_BITMAP_C2RUST)]
+            {
+                unsafe {
+                    bitmap_c2rust::set_bit(
+                        index as core::ffi::c_ulong,
+                        self.as_ptr().cast_mut().cast::<core::ffi::c_ulong>(),
+                    )
+                };
+                return;
+            }
+
+            #[cfg(not(KMIRI_BITMAP_C2RUST))]
+            {
             let word = index / usize::BITS as usize;
             let bit = index % usize::BITS as usize;
             let words = usize::div_ceil(self.len(), usize::BITS as usize);
@@ -404,6 +459,7 @@ impl Bitmap {
                 data[word] |= 1usize << bit;
             }
             return;
+            }
         }
 
         #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
@@ -436,6 +492,19 @@ impl Bitmap {
         );
         #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
+            #[cfg(KMIRI_BITMAP_C2RUST)]
+            {
+                unsafe {
+                    bitmap_c2rust::__clear_bit(
+                        index as core::ffi::c_ulong,
+                        self.as_mut_ptr().cast::<core::ffi::c_ulong>(),
+                    )
+                };
+                return;
+            }
+
+            #[cfg(not(KMIRI_BITMAP_C2RUST))]
+            {
             let word = index / usize::BITS as usize;
             let bit = index % usize::BITS as usize;
             let words = usize::div_ceil(self.len(), usize::BITS as usize);
@@ -445,6 +514,7 @@ impl Bitmap {
                 data[word] &= !(1usize << bit);
             }
             return;
+            }
         }
 
         #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
@@ -478,6 +548,19 @@ impl Bitmap {
         );
         #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
+            #[cfg(KMIRI_BITMAP_C2RUST)]
+            {
+                unsafe {
+                    bitmap_c2rust::clear_bit(
+                        index as core::ffi::c_ulong,
+                        self.as_ptr().cast_mut().cast::<core::ffi::c_ulong>(),
+                    )
+                };
+                return;
+            }
+
+            #[cfg(not(KMIRI_BITMAP_C2RUST))]
+            {
             let word = index / usize::BITS as usize;
             let bit = index % usize::BITS as usize;
             let words = usize::div_ceil(self.len(), usize::BITS as usize);
@@ -487,6 +570,7 @@ impl Bitmap {
                 data[word] &= !(1usize << bit);
             }
             return;
+            }
         }
 
         #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
@@ -522,6 +606,21 @@ impl Bitmap {
         let len = core::cmp::min(src.len(), self.len());
         #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
+            #[cfg(KMIRI_BITMAP_C2RUST)]
+            {
+                unsafe {
+                    bitmap_c2rust::bitmap_copy_and_extend(
+                        self.as_mut_ptr().cast::<core::ffi::c_ulong>(),
+                        src.as_ptr().cast::<core::ffi::c_ulong>(),
+                        len as u32,
+                        self.len() as u32,
+                    )
+                };
+                return;
+            }
+
+            #[cfg(not(KMIRI_BITMAP_C2RUST))]
+            {
             let dst_words = usize::div_ceil(self.len(), usize::BITS as usize);
             let src_words = usize::div_ceil(len, usize::BITS as usize);
             // SAFETY: both slices are valid for the computed lengths.
@@ -532,6 +631,7 @@ impl Bitmap {
                 dst[..src_words].copy_from_slice(src);
             }
             return;
+            }
         }
 
         #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
@@ -572,6 +672,22 @@ impl Bitmap {
     pub fn last_bit(&self) -> Option<usize> {
         #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
+            #[cfg(KMIRI_BITMAP_C2RUST)]
+            {
+                let index = unsafe {
+                    bitmap_c2rust::_find_last_bit(
+                        self.as_ptr().cast::<core::ffi::c_ulong>(),
+                        self.len() as core::ffi::c_ulong,
+                    ) as usize
+                };
+                if index >= self.len() {
+                    return None;
+                }
+                return Some(index);
+            }
+
+            #[cfg(not(KMIRI_BITMAP_C2RUST))]
+            {
             if self.len() == 0 {
                 return None;
             }
@@ -592,6 +708,7 @@ impl Bitmap {
                 }
             }
             return None;
+            }
         }
 
         #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
@@ -619,6 +736,26 @@ impl Bitmap {
         );
         #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
+            #[cfg(KMIRI_BITMAP_C2RUST)]
+            {
+                if start >= self.len() {
+                    return None;
+                }
+                let index = unsafe {
+                    bitmap_c2rust::_find_next_bit(
+                        self.as_ptr().cast::<core::ffi::c_ulong>(),
+                        self.len() as core::ffi::c_ulong,
+                        start as core::ffi::c_ulong,
+                    ) as usize
+                };
+                if index >= self.len() {
+                    return None;
+                }
+                return Some(index);
+            }
+
+            #[cfg(not(KMIRI_BITMAP_C2RUST))]
+            {
             if start >= self.len() {
                 return None;
             }
@@ -632,6 +769,7 @@ impl Bitmap {
                 }
             }
             return None;
+            }
         }
 
         #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
@@ -659,6 +797,26 @@ impl Bitmap {
         );
         #[cfg(all(miri, not(KMIRI_BITMAP_PASSTHROUGH)))]
         {
+            #[cfg(KMIRI_BITMAP_C2RUST)]
+            {
+                if start >= self.len() {
+                    return None;
+                }
+                let index = unsafe {
+                    bitmap_c2rust::_find_next_zero_bit(
+                        self.as_ptr().cast::<core::ffi::c_ulong>(),
+                        self.len() as core::ffi::c_ulong,
+                        start as core::ffi::c_ulong,
+                    ) as usize
+                };
+                if index >= self.len() {
+                    return None;
+                }
+                return Some(index);
+            }
+
+            #[cfg(not(KMIRI_BITMAP_C2RUST))]
+            {
             if start >= self.len() {
                 return None;
             }
@@ -672,6 +830,7 @@ impl Bitmap {
                 }
             }
             return None;
+            }
         }
 
         #[cfg(any(not(miri), KMIRI_BITMAP_PASSTHROUGH))]
