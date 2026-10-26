@@ -44,6 +44,25 @@ run: build
 		-initrd /tmp/initramfs-rust.cpio.gz \
 		-append "console=ttyS0,115200 earlycon=ttyS0,115200 rdinit=/init loglevel=8 panic=-1"
 
+.PHONY: uml-rust-minimal
+uml-rust-minimal:
+	make ARCH=um LLVM=1 defconfig
+	./scripts/config --enable RUST
+	./scripts/config --enable MODULES
+	./scripts/config --enable SAMPLES
+	./scripts/config --enable SAMPLES_RUST
+	./scripts/config --enable SAMPLE_RUST_MINIMAL
+	./scripts/config --enable BLK_DEV_INITRD
+	./scripts/config --enable RD_GZIP
+	./scripts/config --enable DEVTMPFS
+	./scripts/config --enable DEVTMPFS_MOUNT
+	./scripts/config --enable BINFMT_ELF
+	./scripts/config --enable BINFMT_SCRIPT
+	make ARCH=um LLVM=1 olddefconfig
+	make -j"$$(nproc)" ARCH=um LLVM=1 linux
+	./initramfs.sh
+	timeout --foreground 90 ./linux umid=rust-minimal mem=512M initrd=/tmp/initramfs-rust.cpio.gz rdinit=/init con0=fd:0,fd:1 || test $$? -eq 124
+
 rust-analyzer: .config
 	make LLVM=1 rust-analyzer
 
@@ -59,6 +78,50 @@ miri:
 .PHONY: miri-unit
 miri-unit:
 	$(MAKE) -f $(SELF) miri KIND=unit
+
+.PHONY: miri-unit-passthrough
+miri-unit-passthrough:
+	set -euo pipefail
+	UM_CFG=/tmp/kmiri-pt/um.config
+	mkdir -p /tmp/kmiri-pt
+	rm -f "$$UM_CFG"
+	make ARCH=um LLVM=1 KCONFIG_CONFIG="$$UM_CFG" defconfig
+	./scripts/config --file "$$UM_CFG" --enable RUST
+	./scripts/config --file "$$UM_CFG" --enable MODULES
+	./scripts/config --file "$$UM_CFG" --enable SAMPLES
+	./scripts/config --file "$$UM_CFG" --enable SAMPLES_RUST
+	./scripts/config --file "$$UM_CFG" --enable SAMPLE_KMIRI_PASSTHROUGH
+	./scripts/config --file "$$UM_CFG" --enable PROC_FS
+	./scripts/config --file "$$UM_CFG" --enable HOSTFS
+	./scripts/config --file "$$UM_CFG" --enable BLK_DEV_INITRD
+	./scripts/config --file "$$UM_CFG" --enable RD_GZIP
+	./scripts/config --file "$$UM_CFG" --enable DEVTMPFS
+	./scripts/config --file "$$UM_CFG" --enable DEVTMPFS_MOUNT
+	./scripts/config --file "$$UM_CFG" --enable BINFMT_ELF
+	./scripts/config --file "$$UM_CFG" --enable BINFMT_SCRIPT
+	make ARCH=um LLVM=1 KCONFIG_CONFIG="$$UM_CFG" olddefconfig
+	make -j"$$(nproc)" ARCH=um LLVM=1 KCONFIG_CONFIG="$$UM_CFG" linux
+	./initramfs-kmiri.sh
+	mkdir -p /tmp/kmiri-pt
+	rm -f /tmp/kmiri-pt/ready /tmp/kmiri-pt/req.* /tmp/kmiri-pt/resp.* /tmp/kmiri-pt/.resp.*
+	rm -f /tmp/kmiri-pt/uml.log
+	./linux umid=kmiri-passthrough mem=512M initrd=/tmp/initramfs-kmiri.cpio.gz rdinit=/init con0=fd:0,fd:1 > /tmp/kmiri-pt/uml.log 2>&1 &
+	trap 'pkill -f "^\./linux umid=kmiri-passthrough" 2>/dev/null || true' EXIT
+	PT_DIR=/tmp/kmiri-pt
+	for i in $$(seq 1 200); do
+		test -f "$$PT_DIR/ready" && break
+		sleep 0.1
+	done
+	test -f "$$PT_DIR/ready"
+	make LLVM=1 ARCH=x86_64 olddefconfig
+	KMIRI_PASSTHROUGH_DIR="$$PT_DIR" \
+	LD_LIBRARY_PATH="$$(rustc --print sysroot)/lib:$$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/lib:$${LD_LIBRARY_PATH:-}" \
+	MIRI_SYSROOT=$(MIRI_SYSROOT) \
+	make LLVM=1 ARCH=x86_64 miri-kernel-test \
+		RUSTC=rustc MIRI_RUSTC=/home/zjp/KMiri/kmiri/target/debug/miri \
+		MIRI_TEST="bitmap" \
+		MIRI_FLAGS="-Zmiri-permissive-provenance -Amissing-docs --cfg KMIRI_BITMAP_PASSTHROUGH" \
+		HOSTRUSTC=rustc
 
 .PHONY: miri-doctest
 miri-doctest:
