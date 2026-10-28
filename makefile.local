@@ -2,7 +2,7 @@
 
 SELF := $(abspath $(lastword $(MAKEFILE_LIST)))
 
-MIRI_SYSROOT ?= /home/zjp/.cache/miri
+MIRI_SYSROOT ?= $(shell cargo miri setup --print-sysroot 2> /dev/null)
 MIRI_BIN ?= $(shell rustc --print sysroot)/bin/miri
 MIRI_FLAGS ?= -Zmiri-disable-stacked-borrows -Zmiri-permissive-provenance \
 							-Amissing-docs
