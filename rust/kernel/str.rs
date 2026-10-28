@@ -916,3 +916,18 @@ impl fmt::Debug for CString {
         fmt::Debug::fmt(&**self, f)
     }
 }
+
+#[cfg(all(test, miri))]
+mod formatter_new_uaf_repro {
+    use super::*;
+
+    #[test]
+    fn formatter_new_uaf() -> Result {
+        let mut buffer = KVec::<u8>::new();
+        buffer.resize(4096, 0, GFP_KERNEL)?;
+        let mut formatter = Formatter::new(&mut buffer);
+        drop(buffer);
+        let _ = core::fmt::write(&mut formatter, core::format_args!("TEST"));
+        Ok(())
+    }
+}

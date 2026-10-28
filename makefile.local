@@ -5,8 +5,9 @@ SELF := $(abspath $(lastword $(MAKEFILE_LIST)))
 MIRI_SYSROOT ?= /home/zjp/.cache/miri
 MIRI_BIN ?= $(shell rustc --print sysroot)/bin/miri
 MIRI_FLAGS ?= -Zmiri-disable-stacked-borrows -Zmiri-permissive-provenance \
-							-Amissing-docs -Zcrate-attr='feature(arbitrary_self_types)'
+							-Amissing-docs
 KIND ?= all
+MIRI_TEST ?=
 
 ifeq ($(KIND),unit)
 MIRI_TARGETS := miri-kernel-test
