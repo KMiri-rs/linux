@@ -119,9 +119,9 @@ miri-unit-passthrough:
 	LD_LIBRARY_PATH="$$(rustc --print sysroot)/lib:$$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/lib:$${LD_LIBRARY_PATH:-}" \
 	MIRI_SYSROOT=$(MIRI_SYSROOT) \
 	make LLVM=1 ARCH=x86_64 miri-kernel-test \
-		RUSTC=rustc MIRI_RUSTC=/home/zjp/KMiri/kmiri/target/debug/miri \
+		RUSTC=rustc MIRI_RUSTC=$(MIRI_BIN) \
 		MIRI_TEST="bitmap" \
-		MIRI_FLAGS="-Zmiri-permissive-provenance -Amissing-docs --cfg KMIRI_BITMAP_PASSTHROUGH" \
+		MIRI_FLAGS="-Zmiri-tree-borrows -Zmiri-permissive-provenance -Amissing-docs --cfg KMIRI_BITMAP_PASSTHROUGH" \
 		HOSTRUSTC=rustc
 
 .PHONY: miri-doctest
