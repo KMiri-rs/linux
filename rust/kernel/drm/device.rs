@@ -209,20 +209,15 @@ impl<T: drm::Driver> UnregisteredDevice<T> {
         // compatible `Layout`.
         let layout = Kmalloc::aligned_layout(Layout::new::<Device<T, Normal>>());
 
-        // Use a temporary vtable without a `release` callback until `data` is initialized, so
-        // init failure can release the DRM device without dropping uninitialized fields.
-        let alloc_vtable = bindings::drm_driver {
-            release: None,
-            ..Self::VTABLE
-        };
-
+        // Historical unsound version, before 0a69ac25bd59: pass the real VTABLE.
+        // Its release callback is already installed, so init failure drops `data` again.
         // SAFETY:
-        // - `alloc_vtable` reference remains valid until no longer used,
-        // - `dev` is valid by its type invarants,
+        // - `Self::VTABLE` is a const,
+        // - `dev` is valid by its type invariants,
         let raw_drm: *mut Device<T, Normal> = unsafe {
             bindings::__drm_dev_alloc(
                 dev.as_ref().as_raw(),
-                &alloc_vtable,
+                &Self::VTABLE,
                 layout.size(),
                 mem::offset_of!(Device<T, Normal>, dev),
             )
@@ -585,4 +580,229 @@ where
     T::Data: HasDelayedWork<Self, ID>,
     C: DeviceContext,
 {
+}
+
+#[cfg(all(test, miri))]
+mod device_new_init_fail_repro {
+    use core::alloc::Layout;
+    use core::ptr::NonNull;
+
+    use pin_init::pin_data;
+
+    use super::UnregisteredDevice;
+    use crate::{
+        alloc::{
+            allocator::Kmalloc,
+            AllocError,
+            Allocator,
+            NumaNode, //
+        },
+        bindings,
+        device,
+        drm::{
+            self,
+            gem::{
+                self,
+                Object, //
+            },
+        },
+        faux,
+        prelude::*, //
+    };
+
+    /// Output buffer owned by the driver data. Its allocation is what the
+    /// double drop should free twice.
+    #[pin_data]
+    struct Data {
+        kept: KBox<u32>,
+    }
+
+    struct ReproDriver;
+    struct ReproFile;
+    #[pin_data]
+    struct ReproGem {}
+
+    const INFO: drm::DriverInfo = drm::DriverInfo {
+        major: 0,
+        minor: 0,
+        patchlevel: 0,
+        name: c"kmiri-drm",
+        desc: c"KMiri drm::Device::new reproduction",
+    };
+
+    impl drm::file::DriverFile for ReproFile {
+        type Driver = ReproDriver;
+
+        fn open(_dev: &drm::Device<ReproDriver>) -> Result<Pin<KBox<Self>>> {
+            Ok(KBox::new(Self, GFP_KERNEL)?.into())
+        }
+    }
+
+    impl gem::DriverObject for ReproGem {
+        type Driver = ReproDriver;
+        type Args = ();
+
+        fn new(
+            _dev: &drm::Device<ReproDriver>,
+            _size: usize,
+            _args: Self::Args,
+        ) -> impl PinInit<Self, Error> {
+            try_pin_init!(Self {})
+        }
+    }
+
+    #[vtable]
+    impl drm::Driver for ReproDriver {
+        type Data = Data;
+        type RegistrationData<'a> = ();
+        type File = ReproFile;
+        type Object = Object<ReproGem>;
+        type ParentDevice<Ctx: device::DeviceContext> = faux::Device<Ctx>;
+
+        const INFO: drm::DriverInfo = INFO;
+        const IOCTLS: &'static [drm::ioctl::DrmIoctlDescriptor] = &[];
+    }
+
+    fn failing_data() -> impl PinInit<Data, Error> {
+        // `kept` is fully initialized, then `pin_chain` fails. pin-init drops
+        // `kept` before returning `Err`. The vulnerable `new` calls `release`,
+        // which drops it again.
+        try_pin_init!(Data {
+            kept: KBox::new(0x41u32, GFP_KERNEL)?,
+        })
+        .pin_chain(|_| Err(EINVAL))
+    }
+
+    fn stack_parent(raw: &mut bindings::faux_device) -> &faux::Device<device::Bound> {
+        // SAFETY: `faux::Device` is `repr(transparent)` over `Opaque<faux_device>`.
+        // The fixture is zeroed and only used to form the parent pointer.
+        unsafe { &*(raw as *mut bindings::faux_device).cast() }
+    }
+
+    /// Fixed code returns `Err` after one drop. Vulnerable code hits UB inside
+    /// `new` and does not return.
+    #[test]
+    fn drm_device_new_init_fail() -> Result {
+        let mut raw: bindings::faux_device = unsafe { core::mem::zeroed() };
+        let parent = stack_parent(&mut raw);
+        match UnregisteredDevice::<ReproDriver>::new(parent, failing_data()) {
+            Ok(_) => Err(EINVAL),
+            Err(_) => Ok(()),
+        }
+    }
+
+    /// Negative control: initialization succeeds, so `release` drops `data` once.
+    #[test]
+    fn drm_device_new_init_ok() -> Result {
+        let mut raw: bindings::faux_device = unsafe { core::mem::zeroed() };
+        let parent = stack_parent(&mut raw);
+        let drm = UnregisteredDevice::<ReproDriver>::new(
+            parent,
+            try_pin_init!(Data {
+                kept: KBox::new(0x41u32, GFP_KERNEL)?,
+            }),
+        )?;
+        drop(drm);
+        Ok(())
+    }
+
+    const ALIGN: usize = 64;
+
+    fn layout_for(size: usize) -> Layout {
+        Layout::from_size_align(size, ALIGN).unwrap()
+    }
+
+    /// `from_err_ptr` checks the alloc result through these C helpers. A normal
+    /// pointer is not an errno. Error-pointer encoding is the Linux convention
+    /// `(unsigned long)ptr >= -MAX_ERRNO`, with `MAX_ERRNO == 4095`.
+    #[no_mangle]
+    pub unsafe extern "C" fn rust_helper_IS_ERR(ptr: *const core::ffi::c_void) -> bool {
+        (ptr as usize) >= usize::MAX - 4095
+    }
+
+    #[no_mangle]
+    pub unsafe extern "C" fn rust_helper_PTR_ERR(ptr: *const core::ffi::c_void) -> i64 {
+        ptr as i64
+    }
+
+    #[no_mangle]
+    pub unsafe extern "C" fn rust_helper_ERR_PTR(err: i64) -> *mut core::ffi::c_void {
+        err as usize as *mut core::ffi::c_void
+    }
+
+    /// Model of `__drm_dev_alloc`: zeroed allocation, remember the container,
+    /// and store the driver vtable where `drm_dev_init` would store it.
+    ///
+    /// Not modeled: `get_device`, mutex/list setup, `drmm_add_action_or_reset`,
+    /// and the DRM-core-initialized check. Those do not decide whether `release`
+    /// drops `data`.
+    #[no_mangle]
+    pub unsafe extern "C" fn __drm_dev_alloc(
+        _parent: *mut bindings::device,
+        driver: *const bindings::drm_driver,
+        size: usize,
+        offset: usize,
+    ) -> *mut core::ffi::c_void {
+        let layout = layout_for(size);
+        let buf = match Kmalloc::alloc(layout, GFP_KERNEL, NumaNode::NO_NODE) {
+            Ok(buf) => buf,
+            Err(AllocError) => return core::ptr::null_mut(),
+        };
+        let base = buf.cast::<u8>().as_ptr();
+        unsafe { core::ptr::write_bytes(base, 0, size) };
+        let drm = unsafe { base.add(offset).cast::<bindings::drm_device>() };
+        unsafe {
+            (*drm).driver = driver;
+            (*drm).dev_private = base.cast();
+        }
+        remember(base as usize, size);
+        base.cast()
+    }
+
+    /// Model of `drm_dev_put` at refcount 1: call `driver->release` if present,
+    /// then free the container. The callback itself is the real Rust `release`.
+    #[no_mangle]
+    pub unsafe extern "C" fn drm_dev_put(dev: *mut bindings::drm_device) {
+        if dev.is_null() {
+            return;
+        }
+        let base = unsafe { (*dev).dev_private };
+        let release = unsafe { (*(*dev).driver).release };
+        if let Some(release) = release {
+            unsafe { release(dev) };
+        }
+        let Some(size) = take(base as usize) else {
+            return;
+        };
+        let layout = layout_for(size);
+        let ptr = unsafe { NonNull::new_unchecked(base.cast()) };
+        unsafe { Kmalloc::free(ptr, layout) };
+    }
+
+    #[allow(static_mut_refs)]
+    static mut LIVE: [(usize, usize); 8] = [(0, 0); 8];
+
+    fn remember(base: usize, size: usize) {
+        unsafe {
+            for slot in &mut LIVE {
+                if slot.0 == 0 {
+                    *slot = (base, size);
+                    return;
+                }
+            }
+        }
+    }
+
+    fn take(base: usize) -> Option<usize> {
+        unsafe {
+            for slot in &mut LIVE {
+                if slot.0 == base {
+                    let size = slot.1;
+                    *slot = (0, 0);
+                    return Some(size);
+                }
+            }
+        }
+        None
+    }
 }
