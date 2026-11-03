@@ -312,3 +312,33 @@ impl<'data> IovIterDest<'data> {
         Ok(num_written)
     }
 }
+
+#[cfg(all(test, miri))]
+mod copy_from_iter_raw_uaf_repro {
+    use super::IovIterSource;
+    use crate::prelude::*;
+    use core::mem::{MaybeUninit, zeroed};
+
+    /// Calls the original `copy_from_iter_raw`, then uses the returned slice
+    /// after the output buffer is dropped. The iterator is only a fixture.
+    #[test]
+    fn copy_from_iter_raw_uaf() -> Result {
+        let mut raw: crate::bindings::iov_iter = unsafe { zeroed() };
+        raw.data_source = true;
+        let iter = unsafe { IovIterSource::from_raw(&mut raw) };
+
+        let mut storage = KVec::<u8>::new();
+        storage.resize(4, 0, GFP_KERNEL)?;
+        let out = unsafe {
+            core::slice::from_raw_parts_mut(
+                storage.as_mut_ptr().cast::<MaybeUninit<u8>>(),
+                storage.len(),
+            )
+        };
+        let got = iter.copy_from_iter_raw(out);
+        assert_eq!(got[0], 0x41);
+        drop(storage);
+        let _after = got[0];
+        Ok(())
+    }
+}
